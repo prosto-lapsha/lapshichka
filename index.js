@@ -2,6 +2,7 @@
 
 const Hapi = require('@hapi/hapi');
 const Joi = require('@hapi/joi');
+const Boom = require('@hapi/boom');
 const fs = require('fs');
 const path = require('path');
 const { v4 } = require('uuid');
@@ -179,18 +180,16 @@ const init = async () => {
                 return reply.response(AUTH_ERROR).statusCode(401);
             }
 
-            const replyResult = reply
-                .state('userId', user.id, {
-                    isHttpOnly: true,
-                });
+            reply.state('userId', user.id, { isHttpOnly: true });
 
             if (returnUrl) {
-                return replyResult.redirect(returnUrl);
+                return reply.redirect(returnUrl);
             } else {
-                return replyResult.response('Authorized').code(200);
+                return reply.response('Authorized').code(200);
             }
         },
         options: {
+            auth: false,
             validate: {
                 payload: Joi.object({
                     username: Joi.string().required(),
@@ -204,10 +203,10 @@ const init = async () => {
         return {
             authenticate(request, reply) {
                 const { userId } = request.state;
-                if (auth) {
-                    reply.authenticated({ credentials: { user: { id: userId }}});
+                if (userId) {
+                    return reply.authenticated({ credentials: { user: { id: userId }}});
                 } else {
-                    reply.unauthenticated(new Error(AUTH_ERROR));
+                    return reply.unauthenticated(new Boom.unauthorized(AUTH_ERROR));
                 }
             }
         }
