@@ -5,30 +5,33 @@ const Joi = require('@hapi/joi');
 const fs = require('fs');
 const path = require('path');
 const { v4 } = require('uuid');
-const IteratorWithFilter = require('./iterator-with-filter')
 
 const FILE_NAME = 'data.json';
+const AUTH_FILE_NAME = 'auth.json';
+const AUTH_ERROR = 'fuck you';
+
+const filePath = path.join(process.cwd(), FILE_NAME);
+const authFilePath = path.join(process.cwd(), AUTH_FILE_NAME);
+const readData = () => JSON.parse(fs.readFileSync(filePath, { encoding: "utf-8" }).toString());
+const writeData = (data) => fs.writeFileSync(filePath, JSON.stringify(data, null, '  '), { encoding: "utf-8"})
+const readAuth = () => JSON.parse(fs.readFileSync(authFilePath, { encoding: 'utf-8' }).toString());
 
 const init = async () => {
-    const filePath = path.join(process.cwd(), FILE_NAME);
     if (!fs.existsSync(filePath)) {
         fs.writeFileSync(filePath, '{}', { encoding: "utf-8" });
     }
-    
-    const readData = () => JSON.parse(fs.readFileSync(filePath, { encoding: "utf-8" }).toString());
-    const writeData = (data) => fs.writeFileSync(filePath, JSON.stringify(data, null, '  '), { encoding: "utf-8"})
 
     const server = Hapi.server({
         port: 3000,
         host: 'localhost'
     });
 
-    await server.route({
+    server.route({
         method: 'GET',
         path: '/data',
         handler: (request, h) => {
             const { name, surname } = request.query;
-            
+
             let data = Object.values(readData());
 
             if (name || surname) {
@@ -36,36 +39,42 @@ const init = async () => {
             }
 
             return data;
+        },
+        options: {
+            auth: false,
         }
     })
 
-    await server.route({
+    server.route({
         method: 'GET',
         path: '/data/{itemId}',
         handler: (request, reply) => {
             const itemId = request.params.itemId;
-            
+
             const data = readData();
             if (!data[itemId]) {
                 return reply.response(`no item with id ${itemId}`).code(404);
             }
 
             return data[itemId];
+        },
+        options: {
+            auth: false,
         }
     })
 
-    await server.route({
+    server.route({
         method: 'PUT',
         path: '/data',
         handler: (request, reply) => {
             const item = request.payload;
             const data = readData();
             item.id = v4()
-            
+
             data[item.id] = item;
-            
+
             writeData(data)
-            
+
             return reply.response().code(200);
         },
         options: {
@@ -77,8 +86,8 @@ const init = async () => {
             }
         }
     })
-    
-    await server.route({
+
+    server.route({
         method: 'POST',
         path: '/data/{itemId}',
         handler: (request, reply) => {
@@ -91,9 +100,9 @@ const init = async () => {
             const item = request.payload;
 
             item.id = itemId;
-            
+
             data[itemId] = item;
-            
+
             writeData(data);
 
             return reply.response().code(200);
@@ -108,7 +117,7 @@ const init = async () => {
         }
     })
 
-    await server.route({
+    server.route({
         method: 'PATCH',
         path: '/data/{itemId}',
         handler: (request, reply) => {
@@ -122,7 +131,7 @@ const init = async () => {
             item.id = itemId;
 
             data[itemId] = { ...data[itemId], ...item };
-            
+
             writeData(data);
 
             return reply.response().code(200);
@@ -137,7 +146,7 @@ const init = async () => {
         }
     })
 
-    await server.route({
+    server.route({
         method: 'DELETE',
         path: '/data/{itemId}',
         handler: (request, reply) => {
@@ -148,12 +157,64 @@ const init = async () => {
             }
 
             delete data[itemId];
-            
+
             writeData(data);
 
             return reply.response().code(200);
         }
     })
+
+    server.route({
+        method: 'POST',
+        path: '/auth',
+        handler: (request, reply) => {
+            const { username, password } = request.payload;
+            const { returnUrl } = request.query;
+            const authData = Object.values(readAuth());
+            const user = authData.find(item => item.username === username);
+            if (!user) {
+                return reply.response(AUTH_ERROR).statusCode(401);
+            }
+            if (user.password !== password) {
+                return reply.response(AUTH_ERROR).statusCode(401);
+            }
+
+            const replyResult = reply
+                .state('userId', user.id, {
+                    isHttpOnly: true,
+                });
+
+            if (returnUrl) {
+                return replyResult.redirect(returnUrl);
+            } else {
+                return replyResult.response('Authorized').code(200);
+            }
+        },
+        options: {
+            validate: {
+                payload: Joi.object({
+                    username: Joi.string().required(),
+                    password: Joi.string().required(),
+                })
+            },
+        }
+    });
+
+    server.auth.scheme('custom-schema', (server, options) => {
+        return {
+            authenticate(request, reply) {
+                const { userId } = request.state;
+                if (auth) {
+                    reply.authenticated({ credentials: { user: { id: userId }}});
+                } else {
+                    reply.unauthenticated(new Error(AUTH_ERROR));
+                }
+            }
+        }
+    });
+
+    server.auth.strategy('default', 'custom-schema');
+    server.auth.default('default');
 
     await server.start();
     console.log('Server running on %s', server.info.uri);
